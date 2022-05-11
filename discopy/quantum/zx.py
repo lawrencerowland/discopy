@@ -294,6 +294,32 @@ class Spider(Box):
         return Scalar(pi * gradient)\
             @ type(self)(len(self.dom), len(self.cod), self.phase + .5)
 
+    @classmethod
+    def make_spiders(cls, n_legs_in, n_legs_out, phase=0):
+        if n_legs_out > n_legs_in:
+            return cls.make_spiders(n_legs_out, n_legs_in, -phase).dagger()
+
+        if n_legs_in == 1 and n_legs_out == 0:
+            return cls(1, 0, phase)
+        if n_legs_in == 1 and n_legs_out == 1:
+            if phase == 0:
+                return Id(1)
+            return cls(1, 1, phase)
+
+        if n_legs_out != 1 or phase != 0:
+            return (cls.make_spiders(n_legs_in, 1, 0)
+                    >> cls.make_spiders(1, 1, phase)
+                    >> cls.make_spiders(1, n_legs_out, 0))
+
+        if n_legs_in % 2 == 1:
+            return (cls.make_spiders(n_legs_in - 1, 1)
+                    @ Id(1) >> cls(2, n_legs_out))
+
+        new_in = n_legs_in // 2
+        return (cls.make_spiders(new_in, 1)
+                @ cls.make_spiders(new_in, 1)
+                >> cls(2, n_legs_out))
+
 
 class Z(Spider):
     """ Z spider. """
@@ -399,3 +425,24 @@ def gate2zx(box):
 circuit2zx = Functor(
     ob={qubit: PRO(1)}, ar=gate2zx,
     ob_factory=PRO, ar_factory=Diagram)
+
+
+def decomp_ar(box):
+    n, m = len(box.dom), len(box.cod)
+    phase = box.phase
+    if isinstance(box, X):
+        if (n, m) in ((1, 0), (0, 1)):
+            return box
+        box = Id().tensor(*[H] * n) >> Z(n, m, phase) >> Id().tensor(*[H] * m)
+        return decomp(box)
+    if isinstance(box, Z):
+        if (n, m) == (1, 0):
+            return X(1, 0, phase) >> H
+        if (n, m) == (0, 1):
+            return X(0, 1, phase) << H
+        if (n, m) not in ((2, 1), (1, 2)):
+            return Z.make_spiders(n, m, phase)
+    return box
+
+
+decomp = Functor(ob=lambda x: x, ar=decomp_ar)

@@ -4,15 +4,15 @@
 Implements linear optics
 """
 
-from cmath import phase
 import numpy as np
 from math import factorial, sqrt
 from itertools import permutations
 
-from discopy import cat, monoidal
+from discopy import cat, monoidal, rigid
 from discopy.monoidal import PRO
 
 from discopy.quantum.oplus import Matrix
+from discopy.rewriting import InterchangerError
 import sympy
 
 
@@ -416,7 +416,10 @@ class Endo(PathBox):
         return f'Endo({self.scalar})'
 
     def dagger(self):
-        return Endo(phase.conjugate())
+        scalar = self.scalar
+        if hasattr(scalar, 'conjugate'):
+            scalar = scalar.conjugate()
+        return Endo(scalar)
 
     @property
     def matrix(self):
@@ -602,8 +605,9 @@ def ar_to_path(box):
         backend = sympy if hasattr(box.phase, 'free_symbols') else np
         return Endo(backend.exp(2j * backend.pi * box.phase))
     if isinstance(box, BeamSplitter):
-        r, t = box.r, box.t
-        array = Id().tensor(*map(Endo, (r, t, t.conjugate(), -r.conjugate())))
+        sin = np.sin(box.angle * np.pi / 2)
+        cos = np.cos(box.angle * np.pi / 2)
+        array = Id().tensor(*map(Endo, [1j * cos, sin, sin, 1j * cos]))
         w1, w2 = Comonoid(), Monoid()
         return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
     if isinstance(box, MZI):
@@ -617,29 +621,84 @@ def ar_to_path(box):
 to_path = Functor(ob=lambda x: x, ar=ar_to_path)
 
 
-def qpath_drag(diagram):
-    done = False
-    j = 0
-    while not done:
-        for i in range(j, len(diagram)):
-            box = diagram.boxes[i]
-            if box.name == 'Create':
-                while i > j:
-                    diagram = diagram.interchange(i - 1, i)
-                    i -= 1
-                j += 1
-                break
-        done = i == len(diagram) - 1
-    done = False
-    j = len(diagram) - 1
-    while not done:
-        for i in range(j, 0, -1):
-            box = diagram.boxes[i]
-            if box.name == 'Annil':
-                while i < j:
-                    diagram = diagram.interchange(i, i + 1)
-                    i += 1
-                j -= 1
-                break
-        done = i == 1
+def ar_zx_to_path(box):
+    from discopy.quantum.zx import Z, X
+    n, m, phase = len(box.dom), len(box.cod), box.phase
+    if isinstance(box, X):
+        if (n, m, phase) == (1, 0, 0):
+            return Unit() @ Create()
+        if (n, m, phase) == (1, 0, 0.5):
+            return Create() @ Unit()
+        if (n, m, phase) == (0, 1, 0):
+            return Counit() @ Annil()
+        if (n, m, phase) == (0, 1, 0.5):
+            return Annil() @ Counit()
+    if isinstance(box, Z):
+        if (n, m, phase) == (2, 0, 0):
+            w3 = Create() >> Comonoid() >> Id(1) @ Comonoid()
+            w4 = Monoid() @ Monoid() >> Monoid() >> Annil()
+            a, b = Id(1), Endo(1j)
+            d = w3 @ w3 @ w3 @ w3
+            d >>= a @ a @ b @ a @ b @ a @ a @ b @ a @ b @ a @ a
+            d = d.permute(0, 3, 1, 4, 6, 9, 2, 5, 7, 10, 8, 11)
+            d >>= Id(2) @ w4 @ w4 @ Id(2)
+            return d
+        if (n, m, phase) == (2, 1, 0):
+            return Id(1) @ (Monoid() >> Annil()) @ Id(1)
+        if (n, m, phase) == (1, 2, 0):
+            flex = Z(2, 1) @ Id(1) >> Id(1) @ Z(2, 0)
+            return zx_to_path(flex)
+
+    raise NotImplementedError
+
+
+zx_to_path = Functor(ob=lambda x: x, ar=ar_zx_to_path)
+
+
+def swap_right(diagram, i):
+    left, box, right = diagram.layers[i]
+    if box.dom:
+        raise ValueError(f"{box} is not a word.")
+
+    new_left, new_right = left @ right[0:1], right[1:]
+    new_layer = rigid.Id(new_left) @ box @ rigid.Id(new_right)
+    return (
+        diagram[:i]
+        >> new_layer.permute(len(new_left), len(new_left) - 1)
+        >> diagram[i+1:])
+
+
+def drag_out(diagram, i):
+    box = diagram.boxes[i]
+    if box.dom:
+        raise ValueError(f"{box} is not a word.")
+    while i > 0:
+        try:
+            diagram = diagram.interchange(i-1, i)
+            i -= 1
+        except InterchangerError:
+            diagram = swap_right(diagram, i)
     return diagram
+
+
+def drag_all(diagram):
+    i = len(diagram) - 1
+    stop = 0
+    while i >= stop:
+        box = diagram.boxes[i]
+        if not box.dom:  # is word
+            diagram = drag_out(diagram, i)
+            i = len(diagram) - 1
+            stop += 1
+        i -= 1
+    return diagram
+
+
+def qpath_drag(diagram):
+    diagram = drag_all(diagram)
+    diagram = drag_all(diagram.dagger()).dagger()
+    n_state = len([b for b in diagram.boxes if isinstance(b, Create)])
+    n_costate = len([b for b in diagram.boxes if isinstance(b, Annil)])
+    top, bot = diagram[:n_state], diagram[-n_costate:]
+    mat = diagram[n_state:-n_costate]
+    return top, bot, mat
