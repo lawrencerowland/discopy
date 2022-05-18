@@ -412,6 +412,8 @@ def gate2zx(box):
         if box.is_mixed:
             raise NotImplementedError
         return scalar(box.data)
+    if isinstance(box, Controlled) and box.distance != 1:
+        return circuit2zx(box._decompose())
     standard_gates = {
         quantum.H: H,
         quantum.Z: Z(1, 1, .5),
@@ -429,19 +431,19 @@ circuit2zx = Functor(
 
 def decomp_ar(box):
     n, m = len(box.dom), len(box.cod)
-    phase = box.phase
     if isinstance(box, X):
+        phase = box.phase
         if (n, m) in ((1, 0), (0, 1)):
             return box
         box = Id().tensor(*[H] * n) >> Z(n, m, phase) >> Id().tensor(*[H] * m)
         return decomp(box)
     if isinstance(box, Z):
-        if (n, m) == (1, 0):
-            return X(1, 0, phase) >> H
+        phase = box.phase
         if (n, m) == (0, 1):
-            return X(0, 1, phase) << H
-        if (n, m) not in ((2, 1), (1, 2)):
-            return Z.make_spiders(n, m, phase)
+            return X(0, 1, phase) >> H
+        if (n, m) == (1, 0):
+            return X(1, 0, phase) << H
+        return Z.make_spiders(n, 1) >> Z(1, 1, phase) >> Z.make_spiders(1, m)
     return box
 
 

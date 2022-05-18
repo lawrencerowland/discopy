@@ -4,6 +4,7 @@
 Implements linear optics
 """
 
+import math
 import numpy as np
 from math import factorial, sqrt
 from itertools import permutations
@@ -622,37 +623,58 @@ to_path = Functor(ob=lambda x: x, ar=ar_to_path)
 
 
 def ar_zx_to_path(box):
-    from discopy.quantum.zx import Z, X
-    n, m, phase = len(box.dom), len(box.cod), box.phase
+    from discopy.quantum.zx import Z, X, H
+    n, m = len(box.dom), len(box.cod)
     if isinstance(box, X):
-        if (n, m, phase) == (1, 0, 0):
-            return Unit() @ Create()
-        if (n, m, phase) == (1, 0, 0.5):
-            return Create() @ Unit()
+        phase = box.phase
         if (n, m, phase) == (0, 1, 0):
-            return Counit() @ Annil()
+            return Unit() @ Create()
         if (n, m, phase) == (0, 1, 0.5):
+            return Create() @ Unit()
+        if (n, m, phase) == (1, 0, 0):
+            return Counit() @ Annil()
+        if (n, m, phase) == (1, 0, 0.5):
             return Annil() @ Counit()
+        if (n, m, phase) == (1, 1, 0.25):
+            exp_phase = np.exp(1j * 2*math.pi * phase)
+            array = Endo(1j) @ Id(2) @ Endo(1j)
+            w1, w2 = Comonoid(), Monoid()
+            return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
+        if (n, m, phase) == (1, 1, -0.25):
+            exp_phase = np.exp(1j * 2*math.pi * phase)
+            array = Endo(-1j) @ Id(2) @ Endo(-1j)
+            w1, w2 = Comonoid(), Monoid()
+            return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
     if isinstance(box, Z):
-        if (n, m, phase) == (2, 0, 0):
-            w3 = Create() >> Comonoid() >> Id(1) @ Comonoid()
-            w4 = Monoid() @ Monoid() >> Monoid() >> Annil()
-            a, b = Id(1), Endo(1j)
-            d = w3 @ w3 @ w3 @ w3
-            d >>= a @ a @ b @ a @ b @ a @ a @ b @ a @ b @ a @ a
-            d = d.permute(0, 3, 1, 4, 6, 9, 2, 5, 7, 10, 8, 11)
-            d >>= Id(2) @ w4 @ w4 @ Id(2)
+        phase = box.phase
+        if (n, m, phase) == (0, 2, 0):
+            plus = Create() >> Comonoid()
+            fusion = plus >> Id(1) @ plus @ Id(1)
+            d = (fusion @ fusion
+                 >> Id(2) @ zx_to_path(X(1, 1, 0.25) @ X(1, 1, -0.25)) @ Id(2)
+                 >> Id(2) @ fusion.dagger() @ Id(2))
             return d
+        if (n, m) == (0, 1):
+            return Create() >> Comonoid()
+        if (n, m) == (1, 1):
+            exp_phase = np.exp(1j * 2*math.pi * phase)
+            array = Id().tensor(*map(Endo, [1, 0, 0, exp_phase]))
+            w1, w2 = Comonoid(), Monoid()
+            return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
         if (n, m, phase) == (2, 1, 0):
             return Id(1) @ (Monoid() >> Annil()) @ Id(1)
         if (n, m, phase) == (1, 2, 0):
-            flex = Z(2, 1) @ Id(1) >> Id(1) @ Z(2, 0)
+            flex = Id(1) @ Z(0, 2) >> Z(2, 1) @ Id(1)
             return zx_to_path(flex)
-
+    if box == H:
+        array = Id(3) @ Endo(-1)
+        w1, w2 = Comonoid(), Monoid()
+        return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
+    print("BOXX", box, n, m, isinstance(box, Z))
     raise NotImplementedError
 
 
-zx_to_path = Functor(ob=lambda x: x, ar=ar_zx_to_path)
+zx_to_path = Functor(ob=lambda x: x @ x, ar=ar_zx_to_path)
 
 
 def swap_right(diagram, i):
