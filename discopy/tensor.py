@@ -521,6 +521,57 @@ class Diagram(rigid.Diagram):
         array = contractor(*self.to_tn(dtype=dtype)).tensor
         return Tensor(self.dom, self.cod, array)
 
+    def batch_to_tn(self, param_dicts, dtype=None):
+        import tensornetwork as tn
+        if dtype is None:
+            dtype = self._infer_dtype()
+        nodes = [
+            tn.CopyNode(2, getattr(dim, 'dim', dim), f'input_{i}', dtype=dtype)
+            for i, dim in enumerate(self.dom)]
+        inputs, scan = [n[0] for n in nodes], [n[1] for n in nodes]
+        batch_axes = []
+        for box, offset in zip(self.boxes, self.offsets):
+            if isinstance(box, rigid.Swap):
+                scan[offset], scan[offset + 1] = scan[offset + 1], scan[offset]
+                continue
+            if isinstance(box, Spider):
+                dims = (len(box.dom), len(box.cod))
+                if dims == (1, 1):  # identity
+                    continue
+                elif dims == (2, 0):  # cup
+                    tn.connect(*scan[offset:offset + 2])
+                    del scan[offset:offset + 2]
+                    continue
+                else:
+                    node = tn.CopyNode(sum(dims),
+                                       scan[offset].dimension,
+                                       dtype=dtype)
+            else:
+                if box.free_symbols:
+                    arrays = []
+                    for param_dict in param_dicts:
+                        sub_box = fast_subs(box, param_dict)
+                        arrays.append(sub_box.eval().array)
+                    backend = Tensor.get_backend()
+                    array = backend.stack(arrays, axis=-1)
+                    node = tn.Node(array, str(box))
+                    batch_axes.append(node[-1])
+                else:
+                    array = box.eval().array
+                    node = tn.Node(array, str(box))
+            for i, _ in enumerate(box.dom):
+                tn.connect(scan[offset + i], node[i])
+            scan[offset:offset + len(box.dom)] = node[len(box.dom):len(box.dom) + len(box.cod)]
+            nodes.append(node)
+        join = tn.CopyNode(len(batch_axes) + 1,
+                           len(param_dicts),
+                           dtype=dtype)
+        nodes.append(join)
+        print(batch_axes)
+        for i in range(len(batch_axes)):
+            tn.connect(join[i], batch_axes[i])
+        return nodes, [join[-1]] + inputs + scan
+
     def to_tn(self, dtype=None):
         """
         Sends a diagram to :code:`tensornetwork`.
@@ -845,3 +896,25 @@ class Bubble(monoidal.Bubble, Box):
 
 
 Diagram.bubble_factory = Bubble
+
+
+def fast_subs(box, parameters):
+    import pickle
+    from sympy import lambdify
+    b = pickle.loads(pickle.dumps(box))
+    while hasattr(b, 'controlled'):
+        b._free_symbols = set()
+        b = b.controlled
+    syms, values = [], []
+    for sym in b._free_symbols:
+        syms.append(sym)
+        try:
+            values.append(parameters[sym])
+        except KeyError:
+            raise KeyError(f'Unknown symbol {sym!r}.')
+    b._data = lambdify(syms, b._data)(*values)
+    b.drawing_name = b.name
+    b._free_symbols = set()
+    if hasattr(b, '_phase'):
+        b._phase = b._data
+    return b
