@@ -49,11 +49,12 @@ class Network(monoidal.Box):
         return Network(dim, dim, keras.Model(inputs=inputs, outputs=inputs))
 
     @staticmethod
-    def dense_model(dom, cod, hidden_layer_dims=[], activation=tf.nn.relu):
+    def dense_model(dom, cod, name=None, hidden_layer_dims=[], activation=tf.nn.relu):
         inputs = keras.Input(shape=(dom,))
         model = inputs
         for dim in hidden_layer_dims:
             model = keras.layers.Dense(dim, activation=activation)(model)
         outputs = keras.layers.Dense(cod, activation=activation)(model)
-        model = keras.Model(inputs=inputs, outputs=outputs)
+        model = keras.Model(inputs=inputs, outputs=outputs, name=name)
         return Network(PRO(dom), PRO(cod), model)
+        
