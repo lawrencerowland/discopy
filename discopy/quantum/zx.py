@@ -443,7 +443,8 @@ def decomp_ar(box):
             return X(0, 1, phase) >> H
         if (n, m) == (1, 0):
             return X(1, 0, phase) << H
-        return Z.make_spiders(n, 1) >> Z(1, 1, phase) >> Z.make_spiders(1, m)
+        rot = Id(1) if phase == 0 else Z(1, 1, phase)
+        return Z.make_spiders(n, 1) >> rot >> Z.make_spiders(1, m)
     return box
 
 

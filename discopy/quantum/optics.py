@@ -405,7 +405,12 @@ class Endo(PathBox):
         super().__init__('Endo', PRO(1), PRO(1), scalar)
         self.scalar = scalar
         try:
-            self.drawing_name = f'{scalar:.3f}'
+            s = complex(scalar)
+            s = round(s.real, 2) + round(s.imag, 2) * 1j
+            if s.imag == 0:
+                s = s.real
+            self.drawing_name = f'{scalar}'
+            # self.drawing_name = f'{scalar:.3f}'
         except Exception:
             self.drawing_name = str(scalar)
         self.draw_as_spider = True
@@ -490,7 +495,7 @@ class BeamSplitter(Box):
     """
     def __init__(self, angle):
         self.angle = angle
-        super().__init__('Beam splitter', PRO(2), PRO(2), [angle])
+        super().__init__('BS', PRO(2), PRO(2), [angle])
 
     @property
     def matrix(self):
@@ -521,7 +526,7 @@ class MZI(Box):
     ...                     Id(2).eval(3))
     """
     def __init__(self, angle, phase, _dagger=False):
-        self.phase, self.angle, self._dagger = angle, phase, _dagger
+        self.angle, self.phase, self._dagger = angle, phase, _dagger
         super().__init__('MZI', PRO(2), PRO(2), data=[phase, angle],
                          _dagger=_dagger)
 
@@ -531,7 +536,8 @@ class MZI(Box):
         cos = backend.cos(backend.pi * self.angle / 2)
         sin = backend.sin(backend.pi * self.angle / 2)
         exp = backend.exp(1j * backend.pi * self.phase)
-        array = np.array([exp * sin, cos, exp * cos, -sin])
+        sgn = -1 if self.is_dagger else 1
+        array = np.array([-sgn * exp * sin, cos, sgn * exp * cos, sin])
         return Matrix(self.dom, self.cod, array)
 
     def dagger(self):
@@ -636,15 +642,9 @@ def ar_zx_to_path(box):
         if (n, m, phase) == (1, 0, 0.5):
             return Annil() @ Counit()
         if (n, m, phase) == (1, 1, 0.25):
-            exp_phase = np.exp(1j * 2*math.pi * phase)
-            array = Endo(1j) @ Id(2) @ Endo(1j)
-            w1, w2 = Comonoid(), Monoid()
-            return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
+            return BeamSplitter(0.5)
         if (n, m, phase) == (1, 1, -0.25):
-            exp_phase = np.exp(1j * 2*math.pi * phase)
-            array = Endo(-1j) @ Id(2) @ Endo(-1j)
-            w1, w2 = Comonoid(), Monoid()
-            return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
+            return BeamSplitter(0.5).dagger() >> Endo(-1) @ Endo(-1)
     if isinstance(box, Z):
         phase = box.phase
         if (n, m, phase) == (0, 2, 0):
@@ -667,15 +667,12 @@ def ar_zx_to_path(box):
             flex = Id(1) @ Z(0, 2) >> Z(2, 1) @ Id(1)
             return zx_to_path(flex)
     if box == H:
-        array = Id(3) @ Endo(-1)
-        w1, w2 = Comonoid(), Monoid()
-        return w1 @ w1 >> array.permute(2, 1) >> w2 @ w2
+        return MZI(-0.5, 0)
     print("BOXX", box, n, m, isinstance(box, Z))
     raise NotImplementedError
 
 
 zx_to_path = Functor(ob=lambda x: x @ x, ar=ar_zx_to_path)
-
 
 def swap_right(diagram, i):
     left, box, right = diagram.layers[i]
