@@ -44,6 +44,18 @@ class Network(monoidal.Box):
         model = keras.Model(inputs=inputs, outputs=outputs)
         return Network(PRO(dom), PRO(cod), model)
 
+    def swap(left, right, ar_factory=None, swap_factory=None):
+        left_len = len(left)
+        dim = left_len + len(right)
+        inputs = keras.Input(shape=(dim,))
+        model1 = keras.layers.Lambda(
+            lambda x: x[:, :left_len], )(inputs)
+        model2 = keras.layers.Lambda(
+            lambda x: x[:, left_len:], )(inputs)
+        outputs = keras.layers.Concatenate()([model2, model1])
+        model = keras.Model(inputs=inputs, outputs=outputs)
+        return Network(PRO(dim), PRO(dim), model)
+
     @staticmethod
     def id(dim):
         inputs = keras.Input(shape=(len(dim),))
