@@ -105,8 +105,8 @@ class Diagram(monoidal.Diagram):
             Use another function for computing the permanent
             or set permanent = np.determinant to compute fermionic statistics
 
-        >>> network = MZI(0.2, 0.4) @ MZI(0.2, 0.4)\
-                      >> Id(1) @ MZI(0.2, 0.4) @ Id(1)
+        >>> network = MZI(0.4, 0.2) @ MZI(0.4, 0.2)\
+                      >> Id(1) @ MZI(0.4, 0.2) @ Id(1)
         >>> amplitude = network.amp([1, 0, 0, 1], [1, 0, 1, 0])
         >>> probability = np.abs(amplitude) ** 2
         >>> probability
@@ -495,7 +495,7 @@ class BeamSplitter(Box):
     """
     def __init__(self, angle):
         self.angle = angle
-        super().__init__('BS', PRO(2), PRO(2), [angle])
+        super().__init__(f'BS({angle})', PRO(2), PRO(2), [angle])
 
     @property
     def matrix(self):
@@ -505,7 +505,7 @@ class BeamSplitter(Box):
         return Matrix(self.dom, self.cod, array)
 
     def dagger(self):
-        return BeamSplitter(- self.angle)
+        return BeamSplitter(-self.angle) >> Endo(-1) @ Endo(-1)
 
 
 class MZI(Box):
@@ -527,8 +527,8 @@ class MZI(Box):
     """
     def __init__(self, angle, phase, _dagger=False):
         self.angle, self.phase, self._dagger = angle, phase, _dagger
-        super().__init__('MZI', PRO(2), PRO(2), data=[phase, angle],
-                         _dagger=_dagger)
+        super().__init__(f'MZI({angle}, {phase})', PRO(2), PRO(2),
+                         data=[phase, angle], _dagger=_dagger)
 
     @property
     def matrix(self):
@@ -537,6 +537,7 @@ class MZI(Box):
         sin = backend.sin(backend.pi * self.angle / 2)
         exp = backend.exp(1j * backend.pi * self.phase)
         sgn = -1 if self.is_dagger else 1
+        # scalar = 1j * np.exp(1j * backend.pi * self.angle / 2)
         array = np.array([-sgn * exp * sin, cos, sgn * exp * cos, sin])
         return Matrix(self.dom, self.cod, array)
 
@@ -642,9 +643,9 @@ def ar_zx_to_path(box):
         if (n, m, phase) == (1, 0, 0.5):
             return Annil() @ Counit()
         if (n, m, phase) == (1, 1, 0.25):
-            return BeamSplitter(0.5)
+            return BeamSplitter(0.5)  # GIO
         if (n, m, phase) == (1, 1, -0.25):
-            return BeamSplitter(0.5).dagger() >> Endo(-1) @ Endo(-1)
+            return BeamSplitter(0.5).dagger()  # GIO
     if isinstance(box, Z):
         phase = box.phase
         if (n, m, phase) == (0, 2, 0):
@@ -667,12 +668,13 @@ def ar_zx_to_path(box):
             flex = Id(1) @ Z(0, 2) >> Z(2, 1) @ Id(1)
             return zx_to_path(flex)
     if box == H:
-        return MZI(-0.5, 0)
-    print("BOXX", box, n, m, isinstance(box, Z))
+        return MZI(-0.5, 0)  # GIO
+    print("Not Implemented", repr(box))
     raise NotImplementedError
 
 
 zx_to_path = Functor(ob=lambda x: x @ x, ar=ar_zx_to_path)
+
 
 def swap_right(diagram, i):
     left, box, right = diagram.layers[i]
@@ -714,6 +716,7 @@ def drag_all(diagram):
 
 
 def qpath_drag(diagram):
+    """ drag `Create`s and `Annil`s to the top and bottom of the diagram """
     diagram = drag_all(diagram)
     diagram = drag_all(diagram.dagger()).dagger()
     n_state = len([b for b in diagram.boxes if isinstance(b, Create)])
@@ -721,3 +724,41 @@ def qpath_drag(diagram):
     top, bot = diagram[:n_state], diagram[-n_costate:]
     mat = diagram[n_state:-n_costate]
     return top, bot, mat
+
+
+def evaluate(diagram, inp, out):
+    """ evaluate the amplitude of <J|Diagram|I>. """
+    assert len(inp) == len(diagram.dom) and len(out) == len(diagram.cod)
+    x, y, drag = qpath_drag(diagram)
+    matrix = to_matrix(drag).array
+    inp, out = inp[:], out[:]
+    for off in x.normal_form().offsets:
+        inp.insert(off, 1)
+    for off in y.dagger().normal_form().offsets:
+        out.insert(off, 1)
+    print(f'{inp=} {out=}')
+    if sum(inp) != sum(out):
+        raise ValueError('# of photons in != # of photons out')
+    n_modes_in = len(drag.dom)
+    n_modes_out = len(drag.cod)
+    matrix = np.stack([matrix[:, i] for i in range(n_modes_out)
+                      for _ in range(out[i])], axis=1)
+    matrix = np.stack([matrix[i] for i in range(n_modes_in)
+                      for _ in range(inp[i])], axis=0)
+    divisor = np.sqrt(np.prod([factorial(n) for n in inp + out]))
+    return npperm(matrix) / divisor
+
+
+def ar_make_square(box):
+    mon = (Unit() @ Id(1) >>
+           beam_splitter >>
+           Endo(2 ** 0.5) @ Endo(-1j * 2 ** 0.5))
+    comon = mon.dagger()
+    if isinstance(box, Monoid):
+        return mon
+    if isinstance(box, Comonoid):
+        return comon
+    return box
+
+
+make_square = Functor(ob=lambda x: x, ar=ar_make_square)
