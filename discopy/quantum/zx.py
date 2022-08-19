@@ -8,6 +8,7 @@ from discopy.rigid import Functor, PRO
 from discopy.quantum.circuit import Circuit, qubit
 from discopy.quantum.gates import (
     Bra, Ket, Rz, Rx, Ry, CX, CZ, CRz, CRx, Controlled, format_number)
+from discopy.tensor import Dim
 from discopy.quantum.gates import Scalar as GatesScalar
 from math import pi
 
@@ -156,6 +157,7 @@ class Diagram(tensor.Diagram):
                 n_legs_in, n_legs_out, graph.phase(node) * .5)
 
         def move(scan, source, target):
+            node = scan[source]
             if target < source:
                 swaps = Id(target)\
                     @ Diagram.swap(source - target, 1)\
@@ -444,6 +446,33 @@ def gate2zx(box):
 circuit2zx = Functor(
     ob={qubit: PRO(1)}, ar=gate2zx,
     ob_factory=PRO, ar_factory=Diagram)
+
+
+def _ar_zx2tensor(box):
+    backend = tensor.Tensor.get_backend()
+    n, m = len(box.dom), len(box.cod)
+    if isinstance(box, Z):
+        array = backend.zeros(1 << (n + m), dtype=complex)
+        array[0] = 1
+        array[-1] = backend.exp(1j * box.phase)
+        return tensor.Box(box.name, Dim(2) ** n, Dim(2) ** m, array)
+    if isinstance(box, X):
+        diagram = Id().tensor(*[H] * n)
+        diagram >>= Z(n, m, box.phase)
+        diagram >>= Id().tensor(*[H] * m)
+        return zx2tensor(diagram)
+    if isinstance(box, Had):
+        v = 2 ** -0.5
+        array = [v, v, v, -v]
+        return tensor.Box(box.name, Dim(2) ** n, Dim(2) ** m, array)
+    if isinstance(box, Scalar):
+        return tensor.Box(box.name, Dim(2) ** n, Dim(2) ** m, box.data)
+    raise ValueError(f'Unknown box {box}.')
+
+
+zx2tensor = Functor(ob=lambda x: Dim(2) ** len(x),
+                    ar=_ar_zx2tensor,
+                    ar_factory=tensor.Diagram)
 
 
 def decomp_ar(box):

@@ -365,10 +365,36 @@ def from_tk(tk_circuit):
                 circuit.cod[n_qubits:][bit_index: bit_index + 1])\
                 @ Id(circuit.cod[n_qubits + bit_index + 1:])
         else:
-            box = box_from_tk(tk_gate)
-            offset, swaps = make_units_adjacent(tk_gate)
-        left, right = swaps.cod[:offset], swaps.cod[offset + len(box.dom):]
-        circuit = circuit >> swaps >> Id(left) @ box @ Id(right) >> swaps[::-1]
+            indices = [q.index[0] for q in tk_gate.qubits]
+            name = tk_gate.op.type.name
+            if name == 'Rx':
+                circuit = circuit.Rx(tk_gate.op.params[0] / 2, *indices)
+            elif name == 'Rz':
+                circuit = circuit.Rz(tk_gate.op.params[0] / 2, *indices)
+            elif name == 'CRx':
+                circuit = circuit.CRx(tk_gate.op.params[0] / 2, *indices)
+            elif name == 'CRz':
+                circuit = circuit.CRz(tk_gate.op.params[0] / 2, *indices)
+            elif name == 'CX':
+                circuit = circuit.CX(*indices)
+            elif name == 'CZ':
+                circuit = circuit.CZ(*indices)
+            elif name == 'SWAP':
+                assert len(indices) == 2
+                circuit = circuit.permute(*sorted(indices)[::-1])
+            else:
+                ok = False
+                for gate in GATES:
+                    if name == gate.name:
+                        circuit = circuit._apply_gate(gate, *indices)
+                        ok = True
+                        break
+                    if name == gate.name + 'dg':
+                        circuit = circuit._apply_gate(gate.dagger(), *indices)
+                        ok = True
+                        break
+                if not ok:
+                    raise NotImplementedError
     circuit = circuit >> Id(0).tensor(*(
         Bra(bras[i]) if i in bras
         else Discard() if x.name == 'qubit' else Id(bit)
